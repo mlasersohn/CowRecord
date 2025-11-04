@@ -1868,6 +1868,7 @@ static int				old_h = -1;
 	int n_ww, n_hh;
 
 	Window xwin;
+	int desktop = 0;
 	if(win != None)
 	{
 		xwin = win;
@@ -1875,6 +1876,7 @@ static int				old_h = -1;
 	else
 	{
 		xwin = DefaultRootWindow(display);
+		desktop = 1;
 	}
 	XWindowAttributes attributes;
 	XGetWindowAttributes(display, xwin, &attributes);
@@ -3030,6 +3032,7 @@ void	VideoSource::Acquire(int is_base_image)
 			valid = is_window_valid(display, window);
 			if(valid)
 			{
+				XSetErrorHandler(custom_error_handler);
 				void *image_data = GrabRawImage();
 				if(image_data != NULL)
 				{
@@ -3052,6 +3055,13 @@ void	VideoSource::Acquire(int is_base_image)
 						int buttons = 0;
 						x11_mouse(display, window, mx, my, buttons);
 						x11_add_mouse(display, mat, mx, my);
+					}
+					if((output_width > 0) && (output_height > 0))
+					{
+						if((output_width != mat.cols) || (output_height != mat.rows))
+						{
+							cv::resize(mat, mat, cv::Size(output_width, output_height));
+						}
 					}
 					output_width = mat.cols;
 					output_height = mat.rows;
@@ -3091,6 +3101,7 @@ unsigned char *VideoSource::GrabRawImage()
 	unsigned char *r_data = NULL;
 	int n_ww, n_hh;
 	Window xwin;
+	int desktop = 0;
 	if(window != None)
 	{
 		xwin = window;
@@ -3098,6 +3109,7 @@ unsigned char *VideoSource::GrabRawImage()
 	else
 	{
 		xwin = DefaultRootWindow(display);
+		desktop = 1;
 	}
 	XWindowAttributes attributes;
 	XGetWindowAttributes(display, xwin, &attributes);
@@ -3134,37 +3146,29 @@ unsigned char *VideoSource::GrabRawImage()
 			}
 			if(image != NULL)
 			{
-				XWindowAttributes win_info;
-				XGetWindowAttributes(display, xwin, &win_info);
-				if(global_window_error == 0)
+				if(desktop == 0)
 				{
-					Pixmap pixmap = None;
-					if(((start_x + start_w) > true_w)
-					|| ((start_y + start_h) > true_h)
-					|| (start_x < 0)
-					|| (start_y < 0))
-					{
-						XSetSubwindowMode(display, DefaultGC(display, screen_number), IncludeInferiors);
-						pixmap = XCreatePixmap(display, xwin, start_w, start_h, win_info.depth);
-						XCopyArea(display, xwin, pixmap, DefaultGC(display, screen_number), use_x, use_y, start_w, start_h, 0, 0);
-					}
-					int nn = 0;
-					unsigned char *use_data = NULL;
-					if(pixmap == None)
-					{
-						nn = (int)XShmGetImage(display, xwin, image, 0, 0, AllPlanes);
-					}
-					else
-					{
-						nn = (int)XShmGetImage(display, pixmap, image, start_x, start_y, AllPlanes);
-						XFreePixmap(display, pixmap);
-					}
+					XCompositeRedirectWindow(display, xwin, CompositeRedirectAutomatic);
+					Pixmap pixmap = XCompositeNameWindowPixmap(display, xwin);
+					XFlush(display);
+					XShmGetImage(display, pixmap, image, 0, 0, AllPlanes);
+	
+					r_data = (unsigned char *)image->data;
+					outlen = image->width * image->height * 4;
+	
+					XFreePixmap(display, pixmap);
+					XCompositeUnredirectWindow(display, xwin, CompositeRedirectAutomatic);
+				}
+				else
+				{
+					XShmGetImage(display, xwin, image, start_x, start_y, AllPlanes);
 					r_data = (unsigned char *)image->data;
 					outlen = image->width * image->height * 4;
 				}
 			}
 			input_width = start_w;
 			input_height = start_h;
+
 		}
 	}
 	return(r_data);
@@ -3381,13 +3385,18 @@ void	Output::Record(int wait_on_keyboard, double wait_on_delay, double record_ti
 					}
 				}
 				recorded_time += diff;
+				double fps = 0.0;
+				if(recorded_time > 0.0)
+				{
+					fps = (double)frame_cnt / recorded_time;
+				}
 				if(monitor_flag < 2)
 				{
-					fprintf(stderr, "\rRecording: % 8.2f", recorded_time);
+					fprintf(stderr, "\rRecording: % 8.2f AFPS: % 4.2f (%d)", recorded_time, fps, frame_cnt);
 				}
 				else
 				{
-					fprintf(stderr, "\rMonitoring: % 8.2f", recorded_time);
+					fprintf(stderr, "\rMonitoring: % 8.2f AFPS: % 4.2f (%d)", recorded_time, fps, frame_cnt);
 				}
 			}
 		}
@@ -3402,8 +3411,8 @@ void	Output::Record(int wait_on_keyboard, double wait_on_delay, double record_ti
 						frame_cnt, 
 						path, 
 						recorded_time, 
-						muxer->video_frames / diff,
-						(double)frame_cnt / diff);
+						muxer->video_frames / recorded_time,
+						(double)frame_cnt / recorded_time);
 				}
 				else
 				{
@@ -3411,7 +3420,7 @@ void	Output::Record(int wait_on_keyboard, double wait_on_delay, double record_ti
 						frame_cnt, 
 						path, 
 						recorded_time, 
-						(double)frame_cnt / diff);
+						(double)frame_cnt / recorded_time);
 				}
 			}
 			else
@@ -3758,6 +3767,9 @@ void	print_help()
 
 	printf("--monitor\n");
 	printf("\tProvides a window to monitor the output being recorded. It defaults to 1/4 scale.\n\n");
+
+	printf("--monitor_source\n");
+	printf("\tProvides a window to monitor the last video source specfifed. It defaults to 1/4 scale.\n\n");
 
 	printf("--monitor_ratio=[n]\n");
 	printf("\tThe ratio of the monitor to the actually output size, defaulting to 0.25\n");
