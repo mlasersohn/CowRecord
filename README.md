@@ -1,4 +1,5 @@
-(c) 2025 Mark Lasersohn
+(c) 2025-2026 Mark Lasersohn.
+
 NDI® is a registered trademark of Vizrt NDI AB
 
 Use and distribute freely, but at your own risk and with attribution. cow_record uses 
